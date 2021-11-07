@@ -5,11 +5,12 @@ Coupled large strain poroelasticity and chemotaxis
 
 Holzapfel material law. Fibers are rule-based generated
 
+Replicating initial 2D test now in the ventricle
+
 P1b-P1-P1 discretisation for displ-porosity-pressure
 P1-P1 elements for the chemotaxis
 
 Backward Euler scheme for the time discretisation
-
 
 '''
 
@@ -22,48 +23,28 @@ parameters["form_compiler"]["quadrature_degree"] = 2
 
 # parameter-dependent functions
 
-
-def varAngle(s): return ((thetaEpi - thetaEndo) * s + thetaEndo) / 180.0 * pi
-
-
-def normalizeAndProj_vec(u): return project(u/sqrt(dot(u, u)+0.001), FiberSpace)
-
-
-def normalize_vec(u): return u/sqrt(dot(u, u))
-
-
-def subplus(u): return conditional(ge(u, 0.0), u, 0.0)
-
-
-def kappa(J, phi): return kappa0*(1 + (1-phi0)**2/phi0 **
-                                  3*J*phi**3*(J-phi)**2)  # isotropic Kozeny-Carman
-
-
-def react_p(phi, cp, cl): return phi*cp*(gammap - lmbdrp*cl)
-
-
-def react_l(phi, cp, cl): return phi*cp*cl * lmbdpr
-
-
-def ell(p, cp): return Sv*Lp0*(1.0+Lbp*cp) * (pc - p - sigma0*(pic-pii)/(1.+Lbp*cp)) \
-    - l0*(1.+vmax*(p-p0)**nHill/(km**nHill+(p-p0)**nHill))
-
+varAngle = lambda s : ((thetaEpi - thetaEndo) * s + thetaEndo)/ 180.0 * pi
+normalizeAndProj_vec = lambda u : project(u/sqrt(dot(u,u)+0.001),FiberSpace)
+normalize_vec = lambda u : u/sqrt(dot(u,u))
+subplus = lambda u : conditional(ge(u, 0.0), u, 0.0)
+kappa  = lambda J,phi: kappa0*(1 + (1-phi0)**2/phi0**3*J*phi**3*(J-phi)**2)  # isotropic Kozeny-Carman
+react_p = lambda phi,cp,cl: phi*cp*(gammap - lmbdrp*cl)
+react_l = lambda phi,cp,cl: phi*cp*cl * lmbdpr
+ell = lambda p, cp: Sv*Lp0*(1.0+Lbp*cp) * (pc - p - sigma0*(pic-pii)/(1.+Lbp*cp)) \
+      - l0*(1.+vmax*(p-p0)**nHill/(km**nHill+(p-p0)**nHill))
 
 # time constants
 t = 0.0
 dt = 0.05
-Tfinal = 50.
+Tfinal = 40.
 freqsave = 50
 cont = 0
 
-
 # ********* model constants ******* #
 
-# Poroelasticity
 E = Constant(60.)
 nu = Constant(0.35)
 lmbdas = Constant(E*nu/((1. + nu)*(1. - 2.*nu)))
-
 
 rhos = Constant(2.e-3)
 rhof = Constant(1.e-3)
@@ -103,6 +84,7 @@ b_s = Constant(0.209)
 a_fs = Constant(0.162)
 b_fs = Constant(0.166)
 
+# ********* Mesh and I/O ********* #
 
 mesh = Mesh("meshes/newVentr.xml")
 bdry = MeshFunction("size_t", mesh, "meshes/newVentr_facet_region.xml")
@@ -142,6 +124,8 @@ etah = Function(Mh)
 
 # ******* Generate fibre and sheet directions ********** #
 
+# n0 fibre, s0 sheetlets, n0 normal directions
+
 phif = TrialFunction(Mh)
 psif = TestFunction(Mh)
 aDif = Constant(10.)
@@ -169,8 +153,7 @@ f0 = normalizeAndProj_vec(f0flat*cos(varAngle(etah))
                           + s0 * dot(s0, f0flat)*(1.0-cos(varAngle(etah))))
 n0 = cross(f0, s0)
 
-
-# ******* Boundary and initial conditions ********** #
+# ******* Boundary conditions ********** #
 
 pendo = Expression('0.5*p0*sin(pi/40*t)*sin(pi/40*t)', p0=p0, t=t, degree=0)
 
@@ -179,6 +162,8 @@ bcU = DirichletBC(Hh.sub(2), u_D, bdry, base)
 bcP1 = DirichletBC(Hh.sub(4), pendo, bdry, endo)
 bcP2 = DirichletBC(Hh.sub(4), p0, bdry, epi)
 bcH = [bcU, bcP1, bcP2]
+
+# ******* Initial conditions ********** #
 
 cp0 = Expression(
     '(x[0]-0.13047)*(x[0]-0.13047)+(x[1]-3.05269)*(x[1]-3.05269)<= 0.24 ? 0.002:0.0', degree=1)
@@ -232,7 +217,6 @@ F2 = J/dt*((phi-phiold)*cp+phi*(cp-cpold))*wp*dx \
 FF = F1 + F2
 Tang = derivative(FF, Sol, dSol)
 
-
 # ********* Time loop ************* #
 
 while (t < Tfinal):
@@ -243,12 +227,16 @@ while (t < Tfinal):
 
     print("t=%.2f" % t)
 
+    # ********* Solving ************* #
+    
     solve(FF == 0, Sol, J=Tang, bcs=bcH,
           solver_parameters={'newton_solver': {'linear_solver': 'mumps',
-                                               'absolute_tolerance': 1.0e-5,
-                                               'relative_tolerance': 1.0e-5}})
+                                               'absolute_tolerance': 1.0e-7,
+                                               'relative_tolerance': 1.0e-7}})
     cph, clh, uh, phih, ph = Sol.split()
 
+    # ********* Writing ************* #
+    
     if (cont % freqsave == 0):
 
         cph.rename("cp", "cp")
@@ -264,6 +252,8 @@ while (t < Tfinal):
 
     cont += 1
 
+    # ********* Updating ************* #
+    
     assign(cpold, cph)
     assign(clold, clh)
     assign(uold, uh)
